@@ -1,15 +1,12 @@
 import os
-from typing import List, Tuple
+from typing import List, Tuple, Any
 from torch.utils.data import Dataset
-from utils import download_and_unzip
+from utils import download_and_unzip, ampute
+from sklearn.preprocessing import MinMaxScaler
 from urllib.error import URLError
 import pandas as pd
 import torch
 import numpy as np
-
-
-# class TimeSeriesDataset(Dataset):
-#     pass
 
 
 class UCIHARDataset(Dataset):
@@ -37,6 +34,10 @@ class UCIHARDataset(Dataset):
             The default is 'signals'.
         train (bool, optional): If True, creates dataset from train data,
             otherwise from test data.
+        miss_rate (float, optional): The rate of the simulated missingness.
+            The default is 0; meaning the complete data.
+        scaler: An object with ``fit_transform`` and ``inverse_transform``
+            methods. The default is ``sklearn.preprocessing.MinMaxScaler``.
         download (bool, optional): If If true, downloads the dataset from the
             internet and puts it in root directory. If dataset is already
             downloaded, it is not downloaded again.
@@ -68,12 +69,16 @@ class UCIHARDataset(Dataset):
 
     def __init__(
             self, root_dir: str, what: str = "signals",
-            train: bool = True, download: bool = False) -> None:
+            miss_rate: float = 0., train: bool = True,
+            scaler: Any = MinMaxScaler(),
+            download: bool = False) -> None:
         super().__init__()
         self.root_dir = os.path.join(root_dir, self.__class__.__name__)
         self.what = what
+        self.miss_rate = miss_rate
         self.train = train
         self._split = "train" if self.train else "test"
+        self.scaler = scaler
 
         if download:
             self.download()
@@ -83,13 +88,13 @@ class UCIHARDataset(Dataset):
                 "Dataset not found. You may use download=True to download it."
             )
 
-        self.data, self.targets = self._load_data()
+        self.data, self.activity_targets = self._load_data()
 
     def __len__(self) -> int:
         return len(self.data)
 
-    def __getitem__(self, index: int):
-        pass
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, int]:
+        return self.data[index], int(self.activity_targets[index])
 
     @property
     def features_file(self) -> str:
@@ -121,16 +126,35 @@ class UCIHARDataset(Dataset):
         ) for file in self.signal_types]
 
     def _load_data(self) -> Tuple[torch.Tensor, torch.Tensor]:
-        targets = torch.tensor(self._load_file(self.labels_file))
+        """Load the data and targets, scale the data and introduce
+        missing values.
+
+        Returns:
+            tuple: (data, activity_targets) where data is a tensor of shape
+                :math:`(N, 128, 9)` if ``what='signals'``, and
+                activity_targets is a tensor of shape :math:`(N, 1)`.
+        """
+        activity_targets = self._load_file(self.labels_file)
 
         if self.what == 'signals':
-            data = torch.tensor(np.dstack(
+            data = np.dstack(
                 [self._load_file(file) for file in self.signal_files]
-            ))
+            )
         else:
             raise RuntimeError("features handling not implemented yet")
 
-        return data, targets
+        # scale data
+        n_features = data.shape[-1]
+        data = self.scaler.fit_transform(data.reshape(-1, n_features)) \
+            .reshape(data.shape)
+
+        # introduce missing data
+        data = ampute(data, self.miss_rate)
+
+        return (
+            torch.tensor(data).float(),
+            torch.tensor(activity_targets).long(),
+        )
 
     @staticmethod
     def _load_file(filepath: str) -> np.ndarray:
@@ -159,4 +183,4 @@ class UCIHARDataset(Dataset):
 
 
 if __name__ == '__main__':
-    dataset = UCIHARDataset('./', train=True, download=True)
+    ucihar_dataset = UCIHARDataset('data', download=True)

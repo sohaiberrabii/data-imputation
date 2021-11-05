@@ -1,5 +1,7 @@
 import os
 from tqdm import tqdm
+from typing import Tuple
+import numpy as np
 from urllib.request import urlopen
 from zipfile import ZipFile
 
@@ -35,11 +37,30 @@ def _unzip(from_path: str, to_path: str, remove_after: bool = False) -> None:
         os.remove(from_path)
 
 
-if __name__ == '__main__':
-    # UCI-HAR Dataset
-    os.makedirs(os.path.join('data', 'UCIHARDataset'), exist_ok=True)
-    download_and_unzip(
-        'https://archive.ics.uci.edu/ml/machine-learning'
-        '-databases/00240/UCI%20HAR%20Dataset.zip',
-        extract_to='UCIHARDataset'
-    )
+def binary_sampler(p: float, shape: Tuple[int, ...]) -> np.ndarray:
+    """Sample random binary variables.
+
+    Args:
+        p (float): probability of 1.
+        shape (tuple): shape of the generated binary array.
+
+    Returns:
+        ndarray: generated random binary array.
+    """
+    return np.random.choice([0, 1], size=shape, p=[1 - p, p])
+
+
+def ampute(data: np.ndarray, miss_rate: float) -> np.ndarray:
+    """Generate MCAR missing data.
+
+    Args:
+        data (ndarray): the complete data.
+        miss_rate (float): probability of missingness.
+
+    Returns:
+        data_miss (ndarray): data with missing values as nan.
+    """
+    mask = binary_sampler(1 - miss_rate, data.shape)
+    data_miss = data.copy()
+    data_miss[mask == 0] = np.nan
+    return data_miss
