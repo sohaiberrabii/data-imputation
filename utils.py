@@ -28,7 +28,8 @@ def _unzip(from_path: str, to_path: str, remove_after: bool = False) -> None:
     zipfile = ZipFile(from_path)
     for zipinfo in tqdm(zipfile.infolist(), desc='Extracting'):
         path_parts = zipinfo.filename.split(os.path.sep)
-        if not zipinfo.filename.startswith('__MACOSX') and path_parts[1]:
+        if not zipinfo.filename.startswith('__MACOSX') \
+                and len(path_parts) > 1 and path_parts[1]:
             zipinfo.filename = os.path.join(*(path_parts[1:])).replace(" ", "")
             zipfile.extract(zipinfo, path=to_path)
 
