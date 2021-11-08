@@ -51,7 +51,7 @@ def binary_sampler(p: float, shape: Tuple[int, ...]) -> np.ndarray:
 
 
 def ampute(data: np.ndarray, miss_rate: float) -> np.ndarray:
-    """Generate MCAR missing data.
+    """Generate missing data.
 
     Args:
         data (ndarray): the complete data.

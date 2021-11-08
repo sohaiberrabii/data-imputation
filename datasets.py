@@ -88,13 +88,13 @@ class UCIHARDataset(Dataset):
                 "Dataset not found. You may use download=True to download it."
             )
 
-        self.data, self.activity_targets = self._load_data()
+        self.data, self.targets = self._load_data()
 
     def __len__(self) -> int:
         return len(self.data)
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, int]:
-        return self.data[index], int(self.activity_targets[index])
+        return self.data[index], int(self.targets[index])
 
     @property
     def features_file(self) -> str:
@@ -134,7 +134,7 @@ class UCIHARDataset(Dataset):
                 :math:`(N, 128, 9)` if ``what='signals'``, and
                 activity_targets is a tensor of shape :math:`(N, 1)`.
         """
-        activity_targets = self._load_file(self.labels_file)
+        targets = self._load_file(self.labels_file)
 
         if self.what == 'signals':
             data = np.dstack(
@@ -153,7 +153,7 @@ class UCIHARDataset(Dataset):
 
         return (
             torch.tensor(data).float(),
-            torch.tensor(activity_targets).long(),
+            torch.tensor(targets).long(),
         )
 
     @staticmethod
