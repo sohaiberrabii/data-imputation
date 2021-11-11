@@ -1,6 +1,7 @@
 import os
 from tqdm import tqdm
 from typing import Tuple
+from numpy import ndarray
 import numpy as np
 from urllib.request import urlopen
 from zipfile import ZipFile
@@ -27,17 +28,15 @@ def _urlretrieve(url: str, filename: str, chunk_size: int = 1024) -> None:
 def _unzip(from_path: str, to_path: str, remove_after: bool = False) -> None:
     zipfile = ZipFile(from_path)
     for zipinfo in tqdm(zipfile.infolist(), desc='Extracting'):
-        path_parts = zipinfo.filename.split(os.path.sep)
-        if not zipinfo.filename.startswith('__MACOSX') \
-                and len(path_parts) > 1 and path_parts[1]:
-            zipinfo.filename = os.path.join(*(path_parts[1:])).replace(" ", "")
+        if not zipinfo.filename.startswith('__MACOSX'):
+            zipinfo.filename = zipinfo.filename.replace(" ", "")
             zipfile.extract(zipinfo, path=to_path)
 
     if remove_after:
         os.remove(from_path)
 
 
-def binary_sampler(p: float, shape: Tuple[int, ...]) -> np.ndarray:
+def binary_sampler(p: float, shape: Tuple[int, ...]) -> ndarray:
     """Sample random binary variables.
 
     Args:
@@ -50,7 +49,7 @@ def binary_sampler(p: float, shape: Tuple[int, ...]) -> np.ndarray:
     return np.random.choice([0, 1], size=shape, p=[1 - p, p])
 
 
-def ampute(data: np.ndarray, miss_rate: float) -> np.ndarray:
+def ampute(data: ndarray, miss_rate: float) -> ndarray:
     """Generate missing data.
 
     Args:
@@ -64,3 +63,18 @@ def ampute(data: np.ndarray, miss_rate: float) -> np.ndarray:
     data_miss = data.copy()
     data_miss[mask == 0] = np.nan
     return data_miss
+
+
+def imputation_rmse(x: ndarray, x_hat: ndarray, mask: ndarray) -> float:
+    """Compute the rmse between observed and imputed data.
+
+    Args:
+        x (ndarray): The complete data.
+        x_hat (ndarray): The imputed data.
+        mask (ndarray): Binary mask, 1 means observed and 0 missing/imputed.
+
+    Returns:
+        float: the root mean square error.
+    """
+    mse = np.sum(((1 - mask) * x - (1 - mask) * x_hat) ** 2) / np.sum(1 - mask)
+    return np.sqrt(mse)

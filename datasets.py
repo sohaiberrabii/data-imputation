@@ -1,15 +1,15 @@
 import os
 from typing import List, Tuple, Any
+from torch import Tensor
 from torch.utils.data import Dataset
 from utils import download_and_unzip, ampute
 from sklearn.preprocessing import MinMaxScaler
 from urllib.error import URLError
 import pandas as pd
-import torch
 import numpy as np
 
 
-class UCIHARDataset(Dataset):
+class UCIHAR(Dataset):
     """`UCI-HAR <https://archive.ics.uci.edu/ml/datasets/
     human+activity+recognition+using+smartphones>`_ Dataset.
 
@@ -55,7 +55,7 @@ class UCIHARDataset(Dataset):
         "total_acc_z",
     ]
 
-    activity_labels = [
+    labels = [
         "WALKING",
         "WALKING_UPSTAIRS",
         "WALKING_DOWNSTAIRS",
@@ -64,6 +64,7 @@ class UCIHARDataset(Dataset):
         "LAYING",
     ]
 
+    base_folder = "UCIHARDataset"
     data_url = ("https://archive.ics.uci.edu/ml/machine-learning"
                 "-databases/00240/UCI%20HAR%20Dataset.zip")
 
@@ -73,7 +74,8 @@ class UCIHARDataset(Dataset):
             scaler: Any = MinMaxScaler(),
             download: bool = False) -> None:
         super().__init__()
-        self.root_dir = os.path.join(root_dir, self.__class__.__name__)
+        self.root_dir = root_dir
+        self.data_dir = os.path.join(root_dir, self.base_folder)
         self.what = what
         self.miss_rate = miss_rate
         self.train = train
@@ -93,39 +95,39 @@ class UCIHARDataset(Dataset):
     def __len__(self) -> int:
         return len(self.data)
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, int]:
+    def __getitem__(self, index: int) -> Tuple[Tensor, int]:
         return self.data[index], int(self.targets[index])
 
     @property
     def features_file(self) -> str:
-        return os.path.join(self.root_dir, "features.txt")
+        return os.path.join(self.data_dir, "features.txt")
 
     @property
     def data_file(self) -> str:
         return os.path.join(
-            self.root_dir, self._split, f"X_{self._split}.txt"
+            self.data_dir, self._split, f"X_{self._split}.txt"
         )
 
     @property
     def labels_file(self) -> str:
         return os.path.join(
-            self.root_dir, self._split, f"y_{self._split}.txt"
+            self.data_dir, self._split, f"y_{self._split}.txt"
         )
 
     @property
     def subjects_file(self) -> str:
         return os.path.join(
-            self.root_dir, self._split, f"subject_{self._split}.txt"
+            self.data_dir, self._split, f"subject_{self._split}.txt"
         )
 
     @property
     def signal_files(self) -> List[str]:
         return [os.path.join(
-            self.root_dir, self._split, "InertialSignals",
+            self.data_dir, self._split, "InertialSignals",
             file + f"_{self._split}.txt"
         ) for file in self.signal_types]
 
-    def _load_data(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _load_data(self) -> Tuple[Tensor, Tensor]:
         """Load the data and targets, scale the data and introduce
         missing values.
 
@@ -134,7 +136,7 @@ class UCIHARDataset(Dataset):
                 :math:`(N, 128, 9)` if ``what='signals'``, and
                 activity_targets is a tensor of shape :math:`(N, 1)`.
         """
-        targets = self._load_file(self.labels_file)
+        targets = (self._load_file(self.labels_file) - 1).reshape(-1)
 
         if self.what == 'signals':
             data = np.dstack(
@@ -152,8 +154,8 @@ class UCIHARDataset(Dataset):
         data = ampute(data, self.miss_rate)
 
         return (
-            torch.tensor(data).float(),
-            torch.tensor(targets).long(),
+            Tensor(data).float(),
+            Tensor(targets).long(),
         )
 
     @staticmethod
@@ -182,5 +184,17 @@ class UCIHARDataset(Dataset):
             raise RuntimeError(f"Failed to download UCI-HAR: \n{error}")
 
 
+class OPPORTUNITY(Dataset):
+    def __init__(self):
+        super().__init__()
+        pass
+
+    def __len__(self):
+        pass
+
+    def __getitem__(self, index: int) -> Tuple[Tensor, Tensor]:
+        pass
+
+
 if __name__ == '__main__':
-    ucihar_dataset = UCIHARDataset('data', download=True)
+    ucihar_dataset = UCIHAR('data', download=True)
