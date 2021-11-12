@@ -178,7 +178,7 @@ class UCIHAR(Dataset):
         try:
             print(f"Downloading UCI-HAR Dataset from {self.data_url}")
             download_and_unzip(
-                self.data_url, extract_to=self.root_dir, remove_after=True
+                self.data_url, extract_to=self.root_dir, remove_after=False
             )
         except URLError as error:
             raise RuntimeError(f"Failed to download UCI-HAR: \n{error}")

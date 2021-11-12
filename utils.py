@@ -1,6 +1,6 @@
 import os
 from tqdm import tqdm
-from typing import Tuple
+from typing import Tuple, Optional
 from numpy import ndarray
 import numpy as np
 from urllib.request import urlopen
@@ -8,8 +8,16 @@ from zipfile import ZipFile
 
 
 def download_and_unzip(
-        url: str, extract_to: str = '.', remove_after: bool = False) -> None:
-    filename = extract_to + ".zip"
+        url: str,
+        extract_to: str = '.',
+        filename: Optional[str] = None,
+        remove_after: bool = False) -> None:
+    if not filename:
+        filename = os.path.join(
+                extract_to,
+                os.path.basename(url)
+        )
+
     _urlretrieve(url, filename)
     _unzip(filename, extract_to, remove_after=remove_after)
 
