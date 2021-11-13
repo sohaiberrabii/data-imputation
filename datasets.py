@@ -151,7 +151,7 @@ class UCIHAR(Dataset):
             .reshape(data.shape)
 
         # introduce missing data
-        data = ampute(data, self.miss_rate)
+        data = ampute(data, self.miss_rate, missingness="sequence")
 
         return (
             Tensor(data).float(),
@@ -160,7 +160,9 @@ class UCIHAR(Dataset):
 
     @staticmethod
     def _load_file(filepath: str) -> np.ndarray:
-        return pd.read_csv(filepath, delim_whitespace=True, header=None).values
+        return pd.read_csv(
+            filepath, delim_whitespace=True, header=None
+        ).to_numpy()
 
     def _check_exists(self) -> bool:
         files = self.signal_files + [
