@@ -161,6 +161,17 @@ class UCIHAR(Dataset):
             Tensor(targets).long(),
         )
 
+    def save_data(self, root_dir: str, data: ndarray) -> None:
+        # Make directory for data files
+        data_dir = os.path.join(
+            root_dir, f"imputed_ucihar_{int(self.miss_rate * 100)}"
+        )
+        os.makedirs(data_dir, exist_ok=True)
+
+        # Save data as separate signals
+        for i, signal in enumerate(self.signal_types):
+            np.savetxt(os.path.join(data_dir, f"{signal}.txt"), data[:, :, i])
+
     @staticmethod
     def _load_file(filepath: str) -> ndarray:
         return pd.read_csv(
