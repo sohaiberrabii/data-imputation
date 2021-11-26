@@ -161,6 +161,7 @@ class UCIHAR(Dataset):
             Tensor(targets).long(),
         )
 
+    # TODO: inverse transform of scaling
     def save_data(self, root_dir: str, data: ndarray) -> None:
         # Make directory for data files
         data_dir = os.path.join(
