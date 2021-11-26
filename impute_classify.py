@@ -33,7 +33,8 @@ def main(args):
         dataset = UCIHAR(
             root_dir=args.root_dir,
             missingness=args.missingness,
-            miss_rate=args.miss_rate
+            miss_rate=args.miss_rate,
+            download=True
         )
         dataset_train = dataset
         dataset_test = UCIHAR(root_dir=args.root_dir, train=False)
@@ -45,7 +46,8 @@ def main(args):
         )
         dataset_train = OPPORTUNITY(
             root_dir=args.root_dir,
-            split='train', overlap=args.overlap, seq_len=args.seq_len
+            split='train', overlap=args.overlap, seq_len=args.seq_len,
+            download=True
         )
         dataset_test = OPPORTUNITY(
             root_dir=args.root_dir,
