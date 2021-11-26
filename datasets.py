@@ -1,5 +1,6 @@
 import os
 from typing import List, Tuple, Any
+from numpy import ndarray
 from torch import Tensor
 from torch.utils.data import Dataset
 from utils import download_and_unzip, ampute
@@ -70,14 +71,15 @@ class UCIHAR(Dataset):
 
     def __init__(
             self, root_dir: str, what: str = "signals",
-            miss_rate: float = 0., train: bool = True,
-            scaler: Any = MinMaxScaler(),
+            miss_rate: float = 0., missingness: str = "sequence",
+            train: bool = True, scaler: Any = MinMaxScaler(),
             download: bool = False) -> None:
         super().__init__()
         self.root_dir = root_dir
         self.data_dir = os.path.join(root_dir, self.base_folder)
         self.what = what
         self.miss_rate = miss_rate
+        self.missingness = missingness
         self.train = train
         self._split = "train" if self.train else "test"
         self.scaler = scaler
@@ -143,15 +145,16 @@ class UCIHAR(Dataset):
                 [self._load_file(file) for file in self.signal_files]
             )
         else:
-            raise RuntimeError("features handling not implemented yet")
+            raise NotImplementedError("features handling not implemented")
 
         # scale data
         n_features = data.shape[-1]
-        data = self.scaler.fit_transform(data.reshape(-1, n_features)) \
-            .reshape(data.shape)
+        data = self.scaler.fit_transform(
+            data.reshape(-1, n_features)
+        ).reshape(data.shape)
 
         # introduce missing data
-        data = ampute(data, self.miss_rate, missingness="sequence")
+        data = ampute(data, self.miss_rate, missingness=self.missingness)
 
         return (
             Tensor(data).float(),
@@ -159,7 +162,7 @@ class UCIHAR(Dataset):
         )
 
     @staticmethod
-    def _load_file(filepath: str) -> np.ndarray:
+    def _load_file(filepath: str) -> ndarray:
         return pd.read_csv(
             filepath, delim_whitespace=True, header=None
         ).to_numpy()
@@ -187,16 +190,160 @@ class UCIHAR(Dataset):
 
 
 class OPPORTUNITY(Dataset):
-    def __init__(self):
+
+    n_subjects = 4
+    n_adl_runs = 5
+    n_features = 242
+    labels = ['Unknown', 'Stand', 'Walk', 'Sit', 'Lie']
+    test_run_files = ["S2-ADL5.dat", "S3-ADL5.dat", "S4-ADL5.dat"]
+
+    base_folder = "OpportunityUCIDataset"
+    data_url = ("https://archive.ics.uci.edu/ml/machine-learning-databases/"
+                "00226/OpportunityUCIDataset.zip")
+
+    def __init__(
+            self, root_dir: str,
+            seq_len: int = 128,
+            overlap: int = 0,
+            what: str = 'adl',
+            split: str = 'all',
+            scaler: Any = MinMaxScaler(),
+            download: bool = False):
         super().__init__()
-        pass
+        self.root_dir = root_dir
+        self.data_dir = os.path.join(root_dir, self.base_folder)
+        self.split = split
+        self.what = what
+        self.seq_len = seq_len
+        self.overlap = overlap
+        self.scaler = scaler
 
-    def __len__(self):
-        pass
+        if download:
+            self.download()
 
-    def __getitem__(self, index: int) -> Tuple[Tensor, Tensor]:
-        pass
+        if not self._check_exists():
+            raise RuntimeError(
+                "Dataset not found. You may use download=True to download it."
+            )
+
+        self.data, self.targets = self._load_data()
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __getitem__(self, index: int) -> Tuple[Tensor, int]:
+        return self.data[index], int(self.targets[index])
+
+    @property
+    def adl_files(self) -> List[str]:
+        adl_files = [
+            f"S{subject}-ADL{run}.dat"
+            for subject in range(1, self.n_subjects + 1)
+            for run in range(1, self.n_adl_runs + 1)
+        ]
+
+        if self.split == 'train':
+            adl_files = set(adl_files) - set(self.test_run_files)
+        elif self.split == 'test':
+            adl_files = self.test_run_files
+
+        return [os.path.join(
+            self.data_dir, "dataset", file
+        ) for file in adl_files]
+
+    @property
+    def drill_files(self) -> List[str]:
+        drill_run_files = [
+            f"S{subject}-Drill.dat"
+            for subject in range(1, self.n_subjects + 1)
+        ]
+
+        return [os.path.join(
+            self.data_dir, "dataset", file
+        ) for file in drill_run_files]
+
+    def _check_exists(self) -> bool:
+        files = self.drill_files + self.adl_files
+        return all(os.path.isfile(file) for file in files)
+
+    def _load_data(self) -> Tuple[Tensor, Tensor]:
+        if self.what == 'adl':
+            data = self._load_runs(self.adl_files)
+        elif self.what == 'drill':
+            data = self._load_runs(self.drill_files)
+        elif self.what == 'all':
+            data = self._load_runs(self.adl_files + self.drill_files)
+        else:
+            raise RuntimeError("what argument must be 'adl', 'drill' or 'all'")
+
+        # scale sensor data (without time and labels)
+        sensor_data = data[:, 1:self.n_features + 1]
+        sensor_data = self.scaler.fit_transform(
+            sensor_data.reshape(-1, self.n_features)
+        ).reshape(-1, self.seq_len, self.n_features)
+
+        # post-process targets of locomotion
+        targets = data[:, self.n_features + 1]
+        targets[targets == 4] = 3
+        targets[targets == 5] = 4
+
+        targets = targets.reshape(-1, self.seq_len)
+        for i in range(targets.shape[0]):
+            vals, count = np.unique(targets[i, :], return_counts=True)
+            targets[i, 0] = vals[np.argmax(count)]
+        targets = targets[:, 0]
+
+        return (
+            Tensor(sensor_data).float(),
+            Tensor(targets).long(),
+        )
+
+    def _load_runs(self, files: List[str]) -> ndarray:
+        return np.vstack([
+                self._split_overlap(
+                    data=self._load_file(file),
+                    seq_len=self.seq_len, overlap=self.overlap
+                )
+                for file in files
+        ])
+
+    @staticmethod
+    def _split_overlap(data: ndarray, seq_len: int, overlap: int) -> ndarray:
+        q, mod = divmod(data.shape[0] - overlap, seq_len - overlap)
+
+        step = seq_len - overlap
+        overlapped_sequences = [
+            data[i * step: i * step + seq_len, ...]
+            for i in range(q)
+        ]
+
+        if mod:
+            overlapped_sequences += [data[-seq_len:, ...]]
+
+        return np.vstack(overlapped_sequences)
+
+    @staticmethod
+    def _load_file(filepath: str) -> ndarray:
+        return pd.read_csv(
+            filepath, delim_whitespace=True, header=None
+        ).to_numpy()
+
+    def download(self) -> None:
+        if self._check_exists():
+            return
+
+        os.makedirs(self.root_dir, exist_ok=True)
+
+        try:
+            print(f"Downloading Dataset from {self.data_url}")
+            download_and_unzip(
+                self.data_url, extract_to=self.root_dir, remove_after=False
+            )
+        except URLError as error:
+            raise RuntimeError(f"Failed to download: \n{error}")
 
 
 if __name__ == '__main__':
-    ucihar_dataset = UCIHAR('data', download=True)
+    # ucihar = UCIHAR(root_dir='data', download=True)
+    opportunity = OPPORTUNITY(root_dir='data', what='drill')
+    print(f"Number of samples: {len(opportunity)}")
