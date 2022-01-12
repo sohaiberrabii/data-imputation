@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.utils.data import DataLoader
 from utils import imputation_rmse
+from baringhaus import preprocess_baringhaus, compute_stat_Baringhaus
 
 
 class TSImputer:
@@ -41,7 +42,8 @@ class TSImputer:
         self.lossesG = []
         self.lossesD = []
         self.rmse_vals = []
-
+        self.baringhaus_dists = []
+        
     def fit(
             self,
             dataloader: DataLoader,
@@ -108,9 +110,22 @@ class TSImputer:
                 self.lossesG.append(loss_g.item())
                 self.lossesD.append(loss_d.item())
 
+
+            # Eval
+            x_imputed = self.impute(x_miss)
+            m = ~torch.isnan(x_miss)
+            
             # Compute RMSE
-            rmse = self.evaluate(x_observed, x_miss)
+            rmse = imputation_rmse(x_observed.numpy(), x_imputed.numpy(), m.numpy())
             self.rmse_vals.append(rmse)
+
+            # Preprocess (consider only imputed data, remove overlap and reshape)
+            original_data = preprocess_baringhaus(x_observed, m)
+            imputed_data = preprocess_baringhaus(x_imputed, m)
+
+            # Compute Baringhaus
+            baringhaus = compute_stat_Baringhaus(original_data, imputed_data)
+            self.baringhaus_dists.append(baringhaus)
 
     @staticmethod
     def _generator_loss(
