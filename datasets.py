@@ -147,15 +147,28 @@ class UCIHAR(Dataset):
         else:
             raise NotImplementedError("features handling not implemented")
 
-        # scale data
+
         n_features = data.shape[-1]
+
+        # scale data
         data = self.scaler.fit_transform(
             data.reshape(-1, n_features)
         ).reshape(data.shape)
 
-        # introduce missing data
-        data = ampute(data, self.miss_rate, missingness=self.missingness)
+    
+        if self.train:
+            # undo 50% overlap
+            new_data = np.zeros((data.shape[0] + 1, 64, n_features))
+            new_data[0, :, :] = data[0, :64, :]
+            new_data[1:, :, :] = data[:, 64:, :]
+        
+            # introduce missing data
+            new_data = ampute(new_data, self.miss_rate, missingness=self.missingness)
 
+            # redo 50% overlap
+            data[:, :64, :] = new_data[:-1, :, :]
+            data[:, 64:, :] = new_data[1:, :, :] 
+            
         return (
             Tensor(data).float(),
             Tensor(targets).long(),
@@ -356,6 +369,7 @@ class OPPORTUNITY(Dataset):
 
 
 if __name__ == '__main__':
-    # ucihar = UCIHAR(root_dir='data', download=True)
-    opportunity = OPPORTUNITY(root_dir='data', what='drill')
-    print(f"Number of samples: {len(opportunity)}")
+    ucihar = UCIHAR(root_dir='data', download=True)
+    # print(ucihar.data.shape, ucihar.data[0, 64, 0], ucihar.data[1, 0, 0])
+    # opportunity = OPPORTUNITY(root_dir='data', what='drill')
+    print(f"Number of samples: {len(ucihar)}")
