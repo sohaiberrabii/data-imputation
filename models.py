@@ -4,6 +4,7 @@ from torch.optim import Adam
 import torch.nn as nn
 from torch import Tensor
 from torch.utils.data import DataLoader
+from utils import imputation_rmse
 
 
 class TSImputer:
@@ -39,10 +40,13 @@ class TSImputer:
         # Statistics
         self.lossesG = []
         self.lossesD = []
+        self.rmse_vals = []
 
     def fit(
             self,
             dataloader: DataLoader,
+            x_observed,
+            x_miss,
             num_epochs: int = 100):
         for epoch in range(num_epochs):
             for i, (x, _) in enumerate(dataloader):
@@ -104,6 +108,10 @@ class TSImputer:
                 self.lossesG.append(loss_g.item())
                 self.lossesD.append(loss_d.item())
 
+            # Compute RMSE
+            rmse = self.evaluate(x_observed, x_miss)
+            self.rmse_vals.append(rmse)
+
     @staticmethod
     def _generator_loss(
             x: Tensor, x_hat: Tensor,
@@ -115,16 +123,27 @@ class TSImputer:
 
     @torch.no_grad()
     def impute(self, x_miss: Tensor) -> Tensor:
-
         z = torch.rand(x_miss.shape) * 0.01
         mask = ~torch.isnan(x_miss)
         x_noised = mask * torch.nan_to_num(x_miss) + ~mask * z
 
+        self._generator.eval()
         x_g = self._generator(x_noised)
 
         x_imputed = mask * x_noised + ~mask * x_g
 
         return x_imputed
+    
+    @torch.no_grad()
+    def evaluate(
+            self,
+            x_observed: Tensor,
+            x_miss: Tensor) -> Tuple[Tensor, float]:
+        x_imputed = self.impute(x_miss)
+        mask = ~torch.isnan(x_miss)
+        rmse = imputation_rmse(x_observed.numpy(), x_imputed.numpy(), mask.numpy())
+    
+        return rmse
 
 
 class GRUPlusFC(nn.Module):

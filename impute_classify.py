@@ -6,11 +6,9 @@ from torch import nn, Tensor
 import torch
 import argparse
 from torch.utils.data import DataLoader, TensorDataset
-from datasets import UCIHAR, OPPORTUNITY
-from torch.utils.tensorboard import SummaryWriter
+from datasets import UCIHAR
 from models import TSImputer, GRUPlusFC
-from sklearn.metrics import f1_score
-from sklearn.impute import SimpleImputer
+from utils import classify
 
 
 def main(args):
@@ -20,7 +18,7 @@ def main(args):
 
     # Set logger
     writer_gan = SummaryWriter(
-        os.path.join(log_dir, f"simple_gru_{args.miss_rate}")
+        os.path.join(log_dir, f"simple_gru_{args.miss_rate}_{args.imputation_epochs}")
     )
 
     # Set seed
@@ -29,40 +27,28 @@ def main(args):
     torch.manual_seed(args.seed)
 
     # Load dataset
-    if args.dataset == 'UCIHAR':
-        dataset = UCIHAR(
-            root_dir=args.root_dir,
-            missingness=args.missingness,
-            miss_rate=args.miss_rate,
-            download=True
-        )
-        dataset_train = dataset
-        dataset_test = UCIHAR(root_dir=args.root_dir, train=False)
-        n_classes = len(dataset.labels)
-    elif args.dataset == 'OPPORTUNITY':
-        dataset = OPPORTUNITY(
-                root_dir=args.root_dir, seq_len=args.seq_len,
-                overlap=args.overlap
-        )
-        dataset_train = OPPORTUNITY(
-            root_dir=args.root_dir,
-            split='train', overlap=args.overlap, seq_len=args.seq_len,
-            download=True
-        )
-        dataset_test = OPPORTUNITY(
-            root_dir=args.root_dir,
-            split='test', seq_len=args.seq_len, overlap=args.overlap
-        )
-        n_classes = len(dataset.labels)
-    else:
-        raise NotImplementedError("BIRDS dataset not implemented")
+    ucihar_observed = UCIHAR(root_dir=args.root_dir)
+    ucihar_train = UCIHAR(
+        root_dir=args.root_dir,
+        missingness=args.missingness,
+        miss_rate=args.miss_rate,
+        download=True
+    )
+    ucihar_test = UCIHAR(root_dir=args.root_dir, train=False)
+    n_classes = len(dataset.labels)
 
     # Define UCI-HAR parameters
     _, n_timesteps, n_features = dataset.data.shape
 
     # Create the dataloader
     dataloader = DataLoader(
-        dataset,
+        ucihar_train,
+        batch_size=args.batch_size,
+        num_workers=args.workers
+    )
+
+    dataloader_test = DataLoader(
+        ucihar_test,
         batch_size=args.batch_size,
         num_workers=args.workers
     )
@@ -75,29 +61,19 @@ def main(args):
         alpha=args.alpha,
         lr=args.learning_rate
     )
-    imputer.fit(dataloader, num_epochs=args.imputation_epochs)
+    imputer.fit(
+        dataloader,
+        ucihar_observed.data,
+        ucihar_train.data,
+        num_epochs=args.imputation_epochs
+    )
 
-    # Get the imputed datasets
-    dataset_imputed = imputer.impute(x_miss=dataset_train.data)
-    if args.dataset == 'OPPORTUNITY':
-        dataset_test_imputed = imputer.impute(x_miss=dataset_test.data)
-
-        # Create loader for imputed data
-        dataloader_test = DataLoader(
-            TensorDataset(dataset_test_imputed, dataset_test.targets),
-            batch_size=args.batch_size,
-            num_workers=args.workers
-        )
-    else:
-        dataloader_test = DataLoader(
-            dataset_test,
-            batch_size=args.batch_size,
-            num_workers=args.workers
-        )
+    # Get the imputed dataset
+    ucihar_imputed = imputer.impute(x_miss=dataset_train.data)
 
     # Create loader for imputed data
     dataloader_imp = DataLoader(
-        TensorDataset(dataset_imputed, dataset_train.targets),
+        TensorDataset(ucihar_imputed, ucihar_train.targets),
         batch_size=args.batch_size,
         num_workers=args.workers
     )
@@ -123,101 +99,6 @@ def main(args):
     )
 
 
-def classify(
-        model, optimizer, train_loader,
-        test_loader, num_epochs, metric,
-        logger: SummaryWriter) -> None:
-    for epoch in range(num_epochs):
-        # Train
-        train_loss, train_score = train(model, train_loader, optimizer, metric)
-
-        # Test
-        test_score = test(model, test_loader, metric)
-
-        # Logging
-        print(
-            f"Epoch [{epoch}/{num_epochs}]\t"
-            f" Loss: {train_loss:.6f}\t Train {metric}: {train_score:.4f}\t"
-            f"Test {metric}: {test_score:.4f}"
-        )
-        logger.add_scalar("Train Loss", train_loss, epoch)
-        logger.add_scalar(f"Train {metric}", train_score, epoch)
-        logger.add_scalar(f"Test {metric}", test_score, epoch)
-
-
-@torch.no_grad()
-def mean_impute(x_miss: torch.Tensor) -> torch.Tensor:
-    return torch.Tensor(SimpleImputer().fit_transform(
-        x_miss.numpy().reshape(x_miss.shape[0], -1)
-    )).reshape(x_miss.shape)
-
-
-class AverageMeter:
-    def __init__(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
-def train(
-        model: nn.Module,
-        loader: DataLoader,
-        optimizer, metric) -> Tuple[float, float]:
-    # Init metrics
-    losses = AverageMeter()
-    scores = AverageMeter()
-
-    for i, (x, y) in enumerate(loader):
-        optimizer.zero_grad()
-        output = model(x)
-        loss = nn.CrossEntropyLoss()(output, y)
-
-        # record accuracy
-        predicted = output.argmax(1)
-        score = compute_score(y, predicted, metric)
-        scores.update(score, n=y.size(0))
-
-        # record loss
-        losses.update(loss.item(), n=y.size(0))
-
-        loss.backward()
-        optimizer.step()
-
-    return losses.avg, scores.avg
-
-
-@torch.no_grad()
-def test(model, loader, metric) -> float:
-    # Init metrics
-    scores = AverageMeter()
-
-    for i, (x, y) in enumerate(loader):
-        # Classify batch with model
-        output = model(x)
-
-        # Compute score
-        predicted = output.argmax(1)
-        score = compute_score(y, predicted, metric)
-        scores.update(score, n=y.size(0))
-
-    return scores.avg
-
-
-@torch.no_grad()
-def compute_score(y: Tensor, y_pred: Tensor, metric: Callable) -> float:
-    if metric == 'Accuracy':
-        return (y_pred == y).sum().item() / y.size(0)
-    elif metric == 'Fscore':
-        return f1_score(y, y_pred, average='weighted')
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -229,7 +110,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '-d', '--dataset',
         help='Name of dataset',
-        choices=['UCIHAR', 'OPPORTUNITY', 'BIRDS'],
+        choices=['UCIHAR'],
         default='UCIHAR',
         type=str,
     )
@@ -297,12 +178,6 @@ if __name__ == '__main__':
         '-s', '--seed',
         help='Seed for random number generator',
         default=999,
-        type=int,
-    )
-    parser.add_argument(
-        '--seq_len',
-        help='Length of subsequences of time series',
-        default=200,
         type=int,
     )
     parser.add_argument(

@@ -1,12 +1,18 @@
 import os
-from typing import Iterable
-
+from typing import Iterable, Tuple, Callable
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from typing import Optional
 from numpy import ndarray
 import numpy as np
 from urllib.request import urlopen
 from zipfile import ZipFile
+from sklearn.metrics import f1_score
+from sklearn.impute import SimpleImputer
+import torch
+from torch import Tensor
+from torch import nn
+from torch.utils.data import DataLoader
 
 
 def download_and_unzip(
@@ -132,6 +138,110 @@ def imputation_rmse(x: ndarray, x_hat: ndarray, mask: ndarray) -> float:
     """
     mse = np.sum(((1 - mask) * x - (1 - mask) * x_hat) ** 2) / np.sum(1 - mask)
     return np.sqrt(mse)
+
+
+def classify(
+        model, optimizer, train_loader,
+        test_loader, num_epochs,
+        logger: SummaryWriter = None, metric='Accuracy') -> None:
+    
+    best_score = 0.0
+    for epoch in range(num_epochs):
+        # Train
+        train_loss, train_score = train(model, train_loader, optimizer, metric)
+
+        # Test
+        test_score = test(model, test_loader, metric)
+
+        # Logging
+        print(
+            f"Epoch [{epoch}/{num_epochs}]\t"
+            f" Loss: {train_loss:.6f}\t Train {metric}: {train_score:.4f}\t"
+            f"Test {metric}: {test_score:.4f}"
+        )
+
+        if test_score > best_score:
+            best_score = test_score
+
+        if logger:
+            logger.add_scalar("Train Loss", train_loss, epoch)
+            logger.add_scalar(f"Train {metric}", train_score, epoch)
+            logger.add_scalar(f"Test {metric}", test_score, epoch)
+
+    return best_score
+
+
+class AverageMeter:
+    def __init__(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+
+def train(
+        model: nn.Module,
+        loader: DataLoader,
+        optimizer, metric) -> Tuple[float, float]:
+    # Init metrics
+    losses = AverageMeter()
+    scores = AverageMeter()
+
+    for i, (x, y) in enumerate(loader):
+        optimizer.zero_grad()
+        output = model(x)
+        loss = nn.CrossEntropyLoss()(output, y)
+
+        # record accuracy
+        predicted = output.argmax(1)
+        score = compute_score(y, predicted, metric)
+        scores.update(score, n=y.size(0))
+
+        # record loss
+        losses.update(loss.item(), n=y.size(0))
+
+        loss.backward()
+        optimizer.step()
+
+    return losses.avg, scores.avg
+
+
+@torch.no_grad()
+def test(model, loader, metric) -> float:
+    # Init metrics
+    scores = AverageMeter()
+
+    for i, (x, y) in enumerate(loader):
+        # Classify batch with model
+        output = model(x)
+
+        # Compute score
+        predicted = output.argmax(1)
+        score = compute_score(y, predicted, metric)
+        scores.update(score, n=y.size(0))
+
+    return scores.avg
+
+
+@torch.no_grad()
+def mean_impute(x_miss: torch.Tensor) -> torch.Tensor:
+    return torch.Tensor(SimpleImputer().fit_transform(
+        x_miss.numpy().reshape(x_miss.shape[0], -1)
+    )).reshape(x_miss.shape)
+
+
+@torch.no_grad()
+def compute_score(y: Tensor, y_pred: Tensor, metric: Callable) -> float:
+    if metric == 'Accuracy':
+        return (y_pred == y).sum().item() / y.size(0)
+    elif metric == 'Fscore':
+        return f1_score(y, y_pred, average='weighted')
 
 
 def _urlretrieve(url: str, filename: str, chunk_size: int = 1024) -> None:
